@@ -41,7 +41,16 @@ AI 生成文章与排版 → 你润色定稿 → 一键推送草稿箱 → 后�
 
 ## 装好，写第一篇
 
-准备好 Windows 10 / 11、Python 3.10+ 和支持插件的 Codex。下载项目或解压发布包，进入包含 `.agents` 和 `plugins` 的项目根目录。
+准备好 Windows 10 / 11、Python 3.10+ 和支持插件的 Codex。
+
+克隆项目并进入目录。
+
+```powershell
+git clone https://github.com/linshu618/wechat-publishing-workflow.git
+cd wechat-publishing-workflow
+```
+
+也可以下载 ZIP，解压后进入包含 `.agents` 和 `plugins` 的项目根目录。接着运行安装命令。
 
 ```powershell
 python -m pip install -r ".\plugins\wechat-publishing-workflow\requirements.txt"
