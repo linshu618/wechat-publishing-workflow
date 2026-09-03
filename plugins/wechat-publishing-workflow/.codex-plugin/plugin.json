@@ -1,0 +1,28 @@
+{
+  "name": "wechat-publishing-workflow",
+  "version": "0.7.0",
+  "description": "在 Windows 本地生成或编辑公众号 HTML，并在获得明确授权后创建草稿。",
+  "author": {
+    "name": "linshu618"
+  },
+  "license": "MIT",
+  "keywords": [
+    "微信公众号",
+    "HTML 编辑器",
+    "草稿箱",
+    "Windows"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "公众号 HTML 编辑与草稿发布",
+    "shortDescription": "在 Windows 生成或编辑公众号 HTML，并安全准备草稿。",
+    "longDescription": "仅支持 Windows 的本地公众号工作流，可按统一目录生成新 HTML、打开后直接编辑并自动保存、管理正文图片、保存作者/阅读原文/评论默认值、复制公众号兼容格式，并且只在获得明确授权后创建草稿。",
+    "developerName": "linshu618",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": "使用 $wechat-html-editor 生成或打开本地公众号 HTML，直接编辑并自动保存；未指定路径时使用默认文章目录，除非我明确要求，否则不要创建草稿。"
+  }
+}

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.log
+credentials.json
+tests/runtime/
+*.bak
+*.tmp
+.env
+.env.*
