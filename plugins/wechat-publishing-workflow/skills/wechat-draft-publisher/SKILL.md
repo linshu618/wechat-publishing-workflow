@@ -33,7 +33,7 @@ python $publisher test
 python $publisher publish --html-file 'C:\文章\article.html' --cover 'C:\图片\cover.png' --title '文章标题' --author '作者' --digest '摘要'
 ```
 
-`publish` 可以接收 `--html-file`，从 `#article`、`<article>` 或 `<main>` 提取正文；也可以接收 `--content-file`，读取一段 HTML 正文片段。使用 `--html-file` 且省略 `--cover` 时，脚本会先在文章旁边查找最新的 `08c-公众号封面-v*.png/jpg/jpeg`，再查找 `公众号封面.png/jpg/jpeg`。
+`publish` 可以接收 `--html-file`，从 `#article`、`<article>` 或 `<main>` 提取正文；也可以接收 `--content-file`，读取一段 HTML 正文片段。使用 `--html-file` 且省略 `--cover` 时，脚本会先在文章旁边查找最新的 `公众号封面-v*.png/jpg/jpeg`，再查找 `公众号封面.png/jpg/jpeg`。
 
 `$skillRoot` 必须是包含当前 `SKILL.md` 的绝对目录，从 Codex 已解析的技能路径中取得。
 

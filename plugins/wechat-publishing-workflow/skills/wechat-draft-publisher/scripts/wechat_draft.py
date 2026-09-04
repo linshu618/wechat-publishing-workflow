@@ -437,7 +437,7 @@ def find_cover(article_directory: Path, explicit: str | Path | None = None) -> P
         candidate = Path(explicit).expanduser().resolve()
         return candidate if candidate.is_file() else None
     versioned: list[tuple[int, float, Path]] = []
-    for candidate in article_directory.glob("08c-公众号封面-v*.*"):
+    for candidate in article_directory.glob("公众号封面-v*.*"):
         if candidate.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
             continue
         match = re.search(r"-v(\d+)$", candidate.stem)

@@ -104,7 +104,7 @@ codex plugin add wechat-publishing-workflow@personal
 
 将封面放在文章目录里，发布器会按下面的顺序寻找。
 
-1. 版本号最高的 `08c-公众号封面-v*.png`、`.jpg` 或 `.jpeg`
+1. 版本号最高的 `公众号封面-v*.png`、`.jpg` 或 `.jpeg`
 2. `公众号封面.png`、`公众号封面.jpg` 或 `公众号封面.jpeg`
 
 在发布面板中重新选择图片，可以替换自动识别的封面。正文图片使用 PNG 或 JPEG，超过上传尺寸要求时会调用 Pillow 压缩。

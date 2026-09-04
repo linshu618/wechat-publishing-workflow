@@ -93,6 +93,58 @@ class WindowsPluginTests(unittest.TestCase):
         self.assertEqual(editor.PUBLISHER_SCRIPT, PUBLISHER_ROOT / "scripts" / "wechat_draft.py")
         self.assertIsNotNone(editor.load_publisher())
 
+    def test_cover_selection_uses_new_prefix_and_numeric_version(self) -> None:
+        publisher = load_module("publisher_cover_versions", PUBLISHER_ROOT / "scripts" / "wechat_draft.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, modified in (
+                ("公众号封面-v2.png", 400),
+                ("公众号封面-v10.jpg", 200),
+                ("公众号封面-v10.jpeg", 300),
+                ("公众号封面-v100.gif", 500),
+                ("08c-公众号封面-v999.png", 600),
+                ("公众号封面.png", 700),
+            ):
+                path = root / name
+                path.touch()
+                os.utime(path, (modified, modified))
+            self.assertEqual(publisher.find_cover(root), root / "公众号封面-v10.jpeg")
+
+    def test_cover_selection_keeps_plain_name_and_explicit_override(self) -> None:
+        publisher = load_module("publisher_cover_fallbacks", PUBLISHER_ROOT / "scripts" / "wechat_draft.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy = root / "08c-公众号封面-v1.png"
+            legacy.touch()
+            self.assertIsNone(publisher.find_cover(root))
+            plain = root / "公众号封面.jpg"
+            plain.touch()
+            self.assertEqual(publisher.find_cover(root), plain)
+            explicit = root / "自选封面.png"
+            explicit.touch()
+            self.assertEqual(publisher.find_cover(root, explicit), explicit)
+            self.assertIsNone(publisher.find_cover(root, root / "不存在.png"))
+
+    def test_editor_resolves_new_cover_name_in_the_article_directory(self) -> None:
+        editor = load_module("editor_cover_resolution", EDITOR_ROOT / "scripts" / "edit_html.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            article = root / "任意文章.html"
+            cover = root / "公众号封面-v3.png"
+            cover.touch()
+            server = editor.EditorServer(("127.0.0.1", 0), article, "test-token")
+            try:
+                self.assertEqual(server.resolve_cover(), cover)
+                newer = root / "公众号封面-v4.jpg"
+                newer.touch()
+                self.assertEqual(server.resolve_cover(), newer)
+                explicit = root / "自选封面.jpeg"
+                explicit.touch()
+                server.cover_path = explicit
+                self.assertEqual(server.resolve_cover(), explicit)
+            finally:
+                server.server_close()
+
     def test_repeated_saves_keep_the_first_session_backup(self) -> None:
         editor = load_module("editor_session_backup", EDITOR_ROOT / "scripts" / "edit_html.py")
         original = "<!doctype html><html><body><article><p>原始正文</p></article></body></html>"
