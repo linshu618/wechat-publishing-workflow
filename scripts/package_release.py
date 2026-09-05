@@ -37,10 +37,12 @@ PLUGIN_FILES = (
     "skills/wechat-html-editor/assets/editor.css",
     "skills/wechat-html-editor/assets/editor.js",
     "skills/wechat-html-editor/scripts/edit_html.py",
+    "skills/wechat-html-editor/scripts/create_article.py",
     "skills/wechat-html-editor/scripts/start_editor.ps1",
     "tests/fixtures/sample article.html",
     "tests/test_windows_plugin.py",
     "tests/test_release_package.py",
+    "tests/test_article_paths.py",
 )
 RELEASE_FILES = tuple(sorted(ROOT_FILES + tuple(PLUGIN_PREFIX + name for name in PLUGIN_FILES)))
 
