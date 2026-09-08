@@ -115,7 +115,9 @@ YYYY-MM-DD-标题\标题.html
 1. 版本号最高的 `公众号封面-v*.png`、`.jpg` 或 `.jpeg`
 2. `公众号封面.png`、`公众号封面.jpg` 或 `公众号封面.jpeg`
 
-在发布面板中重新选择图片，可以替换自动识别的封面。正文图片使用 PNG 或 JPEG，超过上传尺寸要求时会调用 Pillow 压缩。
+在发布面板中重新选择图片，可以替换自动识别的封面。
+
+正文图片支持 PNG、JPEG 和 GIF。PNG/JPEG 超过 1MB 时会调用 Pillow 压缩；GIF 不超过 10MB，上传时保留原始动画，不转换成静态图。GIF 通过永久图片素材接口上传，会占用账号的图片素材额度；超过大小限制时需先压缩动图后重新插入。
 
 ## 直接启动本地编辑器
 
@@ -153,10 +155,11 @@ AppID 和常用发布设置作为本地配置保存，AppSecret 使用 Windows D
 
 ## 测试与打包
 
-回归测试覆盖编辑器启动、自动保存备份、账号设置、草稿数据和发布包清单。
+回归测试覆盖编辑器启动、自动保存备份、账号设置、草稿数据、GIF 上传分流和发布包清单。前端 GIF 测试需要 Node.js 18+，使用内置示例图片；微信请求均模拟，不会创建真实草稿。
 
 ```powershell
 python -m unittest discover -s ".\plugins\wechat-publishing-workflow\tests" -v
+node .\plugins\wechat-publishing-workflow\tests\test_frontend_gif.cjs
 python .\scripts\package_release.py
 ```
 

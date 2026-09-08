@@ -529,14 +529,14 @@
       const sourceImage = sourceImages[index];
       const cloneImage = cloneImages[index];
       const declared = sourceImage.getAttribute('src') || '';
-      if (/^data:image\/(?:png|jpe?g);base64,/i.test(declared) || /^https:\/\/mmbiz\.(?:qpic|qlogo)\.cn\//i.test(declared)) {
+      if (/^data:image\/(?:png|jpe?g|gif);base64,/i.test(declared) || /^https:\/\/mmbiz\.(?:qpic|qlogo)\.cn\//i.test(declared)) {
         cloneImage.setAttribute('src', declared);
         continue;
       }
       const response = await fetch(sourceImage.currentSrc || sourceImage.src);
       if (!response.ok) throw new Error(`无法读取正文图片：${sourceImage.alt || sourceImage.src}`);
       const blob = await response.blob();
-      if (!/^image\/(?:png|jpe?g)$/i.test(blob.type)) throw new Error('正文图片只支持 PNG 或 JPEG');
+      if (!/^image\/(?:png|jpe?g|gif)$/i.test(blob.type)) throw new Error('正文图片只支持 PNG、JPEG 或 GIF');
       cloneImage.setAttribute('src', await readImage(blob));
     }
     return clone.innerHTML;

@@ -25,6 +25,7 @@ CONFIG_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-d
 CONFIG_PATH = CONFIG_ROOT / "credentials.json"
 LEGACY_CONFIG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-html-editor" / "credentials.json"
 MAX_ARTICLE_IMAGE_BYTES = 1024 * 1024
+MAX_ARTICLE_GIF_BYTES = 10 * 1024 * 1024
 MAX_COVER_BYTES = 10 * 1024 * 1024
 HTTP_TIMEOUT_SECONDS = 90
 DEFAULT_PUBLISH_DEFAULTS = {
@@ -367,14 +368,22 @@ def _compress_article_image(bytes_value: bytes, mime_type: str) -> tuple[bytes, 
 
 
 def decode_data_image(source: str) -> tuple[bytes, str, str]:
-    match = re.fullmatch(r"data:(image/(?:png|jpeg|jpg));base64,([A-Za-z0-9+/=\r\n]+)", source, flags=re.IGNORECASE)
+    match = re.fullmatch(r"data:(image/(?:png|jpeg|jpg|gif));base64,([A-Za-z0-9+/=\r\n]+)", source, flags=re.IGNORECASE)
     if not match:
-        raise ValueError("正文图片必须是 JPG/PNG 数据图片；请通过编辑器重新插入")
+        raise ValueError("正文图片必须是 JPG/PNG/GIF 数据图片；请通过编辑器重新插入")
     mime_type = match.group(1).lower().replace("image/jpg", "image/jpeg")
     try:
         bytes_value = base64.b64decode(re.sub(r"\s", "", match.group(2)), validate=True)
     except ValueError as error:
         raise ValueError("正文图片数据损坏") from error
+    # Preserve every frame and timing byte; never send GIF through JPEG compression.
+    is_gif = bytes_value.startswith((b"GIF87a", b"GIF89a"))
+    if mime_type == "image/gif" or is_gif:
+        if not is_gif:
+            raise ValueError("GIF 图片数据损坏或格式不符")
+        if len(bytes_value) > MAX_ARTICLE_GIF_BYTES:
+            raise ValueError(f"正文 GIF 超过 10MB（当前 {len(bytes_value) / 1024 / 1024:.2f}MB）；请压缩动图后重新插入，不会自动转成静态图")
+        return bytes_value, "image/gif", "gif"
     return _compress_article_image(bytes_value, mime_type)
 
 
@@ -392,7 +401,10 @@ def upload_article_images(appid: str, access_token: str, content: str) -> str:
             bytes_value,
             mime_type,
             f"article-{digest[:12]}.{extension}",
-            "https://api.weixin.qq.com/cgi-bin/media/uploadimg",
+            # uploadimg only accepts JPG/PNG; permanent image material accepts GIF.
+            "https://api.weixin.qq.com/cgi-bin/material/add_material?type=image"
+            if mime_type == "image/gif"
+            else "https://api.weixin.qq.com/cgi-bin/media/uploadimg",
         )
         url = str(result.get("url") or "")
         if not url:
@@ -416,6 +428,8 @@ def _detect_image_type(bytes_value: bytes, filename: str = "cover") -> tuple[str
 
 def decode_cover_data(source: str) -> tuple[bytes, str, str]:
     bytes_value, mime_type, extension = decode_data_image(source)
+    if mime_type not in {"image/png", "image/jpeg"}:
+        raise ValueError("封面必须是 PNG 或 JPEG")
     if len(bytes_value) > MAX_COVER_BYTES:
         raise ValueError("封面超过 10MB")
     return bytes_value, mime_type, extension

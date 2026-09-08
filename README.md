@@ -80,7 +80,7 @@ YYYY-MM-DD-标题\标题.html
 
 ## 开发与验证
 
-项目使用 Python、原生 JavaScript 和 CSS。
+项目使用 Python、原生 JavaScript 和 CSS。前端 GIF 回归测试需要 Node.js 18+。
 
 ```text
 plugins/wechat-publishing-workflow/
@@ -92,6 +92,7 @@ scripts/package_release.py        发布包打包脚本
 
 ```powershell
 python -m unittest discover -s .\plugins\wechat-publishing-workflow\tests -v
+node .\plugins\wechat-publishing-workflow\tests\test_frontend_gif.cjs
 python .\scripts\package_release.py
 ```
 

@@ -53,8 +53,8 @@ python $publisher publish --html-file 'C:\文章\article.html' --cover 'C:\图�
 - 摘要为可选项；省略或留空时不发送 `digest` 字段，交由微信按默认规则处理。命令行仍支持 `--digest` 显式指定摘要。
 - 阅读原文链接可以为空；填写时必须是有效的 HTTP 或 HTTPS 地址，UTF-8 编码后不能超过 1KB。
 - 评论开关通过 `need_open_comment` 传给微信接口，`1` 表示开启，`0` 表示关闭。`only_fans_can_comment` 保持为 `0`。
-- 正文图片只接受 PNG/JPEG 数据网址，或现有的 `mmbiz.qpic.cn`、`mmbiz.qlogo.cn` 地址。调用脚本前，应把浏览器中的本地图片转换成数据网址。
-- 通过 `media/uploadimg` 上传正文图片，把封面上传为永久图片素材，最后调用 `draft/add`。
+- 正文图片接受 PNG/JPEG/GIF 数据网址，或现有的 `mmbiz.qpic.cn`、`mmbiz.qlogo.cn` 地址。调用脚本前，应把浏览器中的本地图片转换成数据网址。
+- 正文 PNG/JPEG 通过 `media/uploadimg` 上传；GIF（不超过 10MB）通过 `material/add_material?type=image` 上传为永久图片素材，使用返回的 URL，保留原始动画字节，禁止转为 JPEG。GIF 会占用账号永久图片素材额度。封面仍只接受 PNG/JPEG，最后调用 `draft/add`。
 - 权限测试、凭据保存或内容验证失败时，不得创建草稿。
 - 微信草稿接口没有原创声明字段，原创必须在公众号后台人工完成。
 
