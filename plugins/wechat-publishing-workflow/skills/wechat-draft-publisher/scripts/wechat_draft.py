@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -465,7 +466,151 @@ def find_cover(article_directory: Path, explicit: str | Path | None = None) -> P
     return None
 
 
-def publish_draft(
+def _draft_state_path(appid: str, article_path: str | Path) -> Path:
+    identity = appid + "\n" + os.path.normcase(str(Path(article_path).expanduser().resolve()))
+    return CONFIG_ROOT / "drafts" / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
+
+
+@contextmanager
+def _draft_lock(state_path: Path):
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with state_path.with_suffix(".lock").open("a+b") as handle:
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise ValueError("这篇文章正在保存草稿，请等待完成后再操作") from error
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _save_draft_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(state, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _load_draft_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict) or state.get("version") != 1:
+            raise ValueError("invalid state")
+        if state.get("status") not in {"pending", "saved", "verified"}:
+            raise ValueError("invalid status")
+        if state.get("status") != "pending" and not state.get("mediaId"):
+            raise ValueError("missing draft id")
+        return state
+    except (ValueError, OSError) as error:
+        raise ValueError("本地草稿关联记录无法读取，已停止提交以避免重复创建；请先恢复记录") from error
+
+
+def _get_draft_snapshot(access_token: str, media_id: str) -> dict[str, str]:
+    result = _request_json(
+        f"https://api.weixin.qq.com/cgi-bin/draft/get?access_token={quote(access_token)}",
+        method="POST",
+        body=json.dumps({"media_id": media_id}).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    items = result.get("news_item")
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        raise ValueError("关联的草稿不是单篇文章，已停止更新，请先在公众号后台检查")
+    # URLs are temporary; editable fields are fingerprinted without storing the article.
+    return {
+        key: hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        for key, value in items[0].items()
+        if key not in {"url", "thumb_url", "update_time", "create_time"}
+    }
+
+
+def publish_draft(*, article_path: str | Path | None = None, existing_media_id: str = "", **fields) -> dict[str, Any]:
+    if article_path is None:
+        if existing_media_id:
+            raise ValueError("关联已有草稿时必须提供文章文件路径")
+        return _submit_draft(**fields)
+    appid, secret = resolve_credentials(str(fields.get("appid") or ""), str(fields.get("secret") or ""))
+    state_path = _draft_state_path(appid, article_path)
+    with _draft_lock(state_path):
+        state = _load_draft_state(state_path)
+        existing_media_id = existing_media_id.strip()
+        if existing_media_id and state.get("mediaId") and existing_media_id != state["mediaId"]:
+            raise ValueError("这篇文章已关联其他草稿，已停止提交；请核对草稿 ID")
+        if state.get("status") == "pending" and not existing_media_id:
+            raise ValueError("上次提交结果未确认，已停止重试以避免重复草稿。请先到后台检查；若已创建，请填写已有草稿 ID 关联")
+        access_token = get_access_token(appid, secret)
+        if existing_media_id and not state.get("mediaId"):
+            state = {"version": 1, "mediaId": existing_media_id, "status": "verified",
+                     "snapshot": _get_draft_snapshot(access_token, existing_media_id)}
+            _save_draft_state(state_path, state)
+        media_id = str(state.get("mediaId") or "")
+        snapshot = None
+        if media_id:
+            snapshot = _get_draft_snapshot(access_token, media_id)
+            if state.get("snapshot") is None:
+                raise ValueError("原草稿已保存，但上次未完成内容校验；已停止更新，请先核对后台草稿和本地关联记录")
+            if snapshot != state["snapshot"]:
+                labels = {"title": "标题", "content": "正文", "author": "作者", "digest": "摘要", "thumb_media_id": "封面", "need_open_comment": "评论设置"}
+                changed = sorted(key for key in set(snapshot) | set(state["snapshot"]) if snapshot.get(key) != state["snapshot"].get(key))
+                raise ValueError("公众号后台草稿已发生变化（" + "、".join(labels.get(key, key) for key in changed) + "），未覆盖。请先核对后台修改")
+        fingerprint_fields = {key: value for key, value in fields.items() if key not in {"appid", "secret"}}
+        fingerprint_fields["cover_bytes"] = hashlib.sha256(fields.get("cover_bytes", b"")).hexdigest()
+        input_hash = hashlib.sha256(json.dumps(fingerprint_fields, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        if media_id and state.get("inputHash") == input_hash and state.get("status") == "verified":
+            return {"ok": True, "appid": appid, "mediaId": media_id, "thumbMediaId": state.get("thumbMediaId", ""), "action": "unchanged"}
+        previous_state = dict(state)
+
+        def before_submit():
+            # Recheck immediately before mutation in case the backend changed during uploads.
+            if media_id and _get_draft_snapshot(access_token, media_id) != snapshot:
+                raise ValueError("准备上传期间后台草稿发生变化，未覆盖，请重新核对")
+            _save_draft_state(state_path, {**state, "version": 1, "status": "pending"})
+
+        def on_saved(result):
+            state.update(version=1, status="saved", mediaId=result["mediaId"], thumbMediaId=result["thumbMediaId"], inputHash=input_hash, snapshot=None)
+            _save_draft_state(state_path, state)
+
+        try:
+            result = _submit_draft(**fields, target_media_id=media_id, resolved_auth=(appid, access_token), before_submit=before_submit, on_saved=on_saved)
+        except WeChatApiError as error:
+            # A definite API rejection is retryable; an uncertain response must not retry add.
+            if error.code is not None:
+                if previous_state:
+                    _save_draft_state(state_path, previous_state)
+                else:
+                    state_path.unlink(missing_ok=True)
+            raise
+        try:
+            state["snapshot"] = _get_draft_snapshot(access_token, result["mediaId"])
+            state["status"] = "verified"
+            _save_draft_state(state_path, state)
+        except Exception:
+            result["warning"] = "草稿已保存，但未能完成内容校验；请先到公众号后台核对，不要重复新建"
+        return result
+
+
+def _submit_draft(
     *,
     title: str,
     content: str,
@@ -478,6 +623,10 @@ def publish_draft(
     need_open_comment: int | bool = 1,
     appid: str = "",
     secret: str = "",
+    target_media_id: str = "",
+    resolved_auth: tuple[str, str] | None = None,
+    before_submit=None,
+    on_saved=None,
 ) -> dict[str, Any]:
     title, digest, content = title.strip(), digest.strip(), content.strip()
     publish_defaults = normalize_publish_defaults({
@@ -496,8 +645,11 @@ def publish_draft(
         raise ValueError("作者不能超过 16 个字符")
     if len(digest) > 120:
         raise ValueError("摘要不能超过 120 个字符")
-    resolved_appid, resolved_secret = resolve_credentials(appid, secret)
-    access_token = get_access_token(resolved_appid, resolved_secret)
+    if resolved_auth is None:
+        resolved_appid, resolved_secret = resolve_credentials(appid, secret)
+        access_token = get_access_token(resolved_appid, resolved_secret)
+    else:
+        resolved_appid, access_token = resolved_auth
     uploaded_content = upload_article_images(resolved_appid, access_token, content)
     cover_hash = hashlib.sha256(cover_bytes).hexdigest()
     cover_result = upload_image(
@@ -523,16 +675,26 @@ def publish_draft(
     }
     if digest:
         payload["articles"][0]["digest"] = digest
+    if target_media_id:
+        payload = {"media_id": target_media_id, "index": 0, "articles": payload["articles"][0]}
+    if before_submit:
+        before_submit()
+    operation = "update" if target_media_id else "add"
     result = _request_json(
-        f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={quote(access_token)}",
+        f"https://api.weixin.qq.com/cgi-bin/draft/{operation}?access_token={quote(access_token)}",
         method="POST",
         body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
-    media_id = str(result.get("media_id") or "")
+    if target_media_id and result.get("errcode") != 0:
+        raise WeChatApiError("微信未确认草稿更新结果，请先检查后台草稿")
+    media_id = target_media_id or str(result.get("media_id") or "")
     if not media_id:
         raise WeChatApiError(explain_wechat_error(result), _integer_or_none(result.get("errcode")), result.get("errmsg"))
-    return {"ok": True, "appid": resolved_appid, "mediaId": media_id, "thumbMediaId": thumb_media_id}
+    saved = {"ok": True, "appid": resolved_appid, "mediaId": media_id, "thumbMediaId": thumb_media_id, "action": "updated" if target_media_id else "created"}
+    if on_saved:
+        on_saved(saved)
+    return saved
 
 
 def extract_article_content(document: str) -> str:
@@ -585,6 +747,7 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--html-file", metavar="HTML文件", type=Path, help="包含完整文章的 HTML 文件")
     source.add_argument("--content-file", metavar="正文文件", type=Path, help="只包含正文片段的 HTML 文件")
     publish.add_argument("--cover", metavar="封面文件", type=Path, help="PNG 或 JPEG 封面文件")
+    publish.add_argument("--draft-id", default="", help="首次关联已有单篇草稿的 media_id；以后自动更新原稿")
     publish.add_argument("--title", metavar="标题", default="", help="文章标题")
     publish.add_argument("--author", metavar="作者", default=None, help="作者名称；省略时使用账号默认作者")
     publish.add_argument("--digest", metavar="摘要", default="", help="文章摘要")
@@ -633,6 +796,8 @@ def main() -> int:
                 raise FileNotFoundError("没有找到封面，请使用 --cover 指定 PNG/JPEG 文件")
             cover_bytes, cover_mime, cover_extension = read_cover_file(cover_path)
             _print_json(publish_draft(
+                article_path=args.html_file or args.content_file,
+                existing_media_id=args.draft_id,
                 title=title,
                 author=args.author if args.author is not None else defaults["author"],
                 digest=args.digest,

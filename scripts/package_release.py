@@ -43,6 +43,10 @@ PLUGIN_FILES = (
     "tests/test_windows_plugin.py",
     "tests/test_release_package.py",
     "tests/test_article_paths.py",
+    "tests/test_gif_support.py",
+    "tests/test_frontend_gif.cjs",
+    "tests/test_draft_tracking.py",
+    "tests/test_frontend_draft.cjs",
 )
 RELEASE_FILES = tuple(sorted(ROOT_FILES + tuple(PLUGIN_PREFIX + name for name in PLUGIN_FILES)))
 

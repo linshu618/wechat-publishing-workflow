@@ -53,7 +53,7 @@
             <span class="wechat-html-editor-publish-mark" aria-hidden="true">微</span>
             <div>
               <span class="wechat-html-editor-publish-eyebrow">公众号发布</span>
-              <strong id="wechat-html-editor-publish-title">确认并推送到草稿箱</strong>
+              <strong id="wechat-html-editor-publish-title">保存到草稿箱</strong>
             </div>
           </div>
           <button type="button" class="wechat-html-editor-publish-close" data-action="close-publish" aria-label="关闭发布窗口" title="关闭">×</button>
@@ -66,6 +66,7 @@
             </div>
             <div class="wechat-html-editor-publish-grid">
               <label class="wide"><span class="field-title">标题</span><input data-publish-title maxlength="64" aria-required="true" placeholder="请输入文章标题"></label>
+              <label class="wide"><span class="field-title">已有草稿 ID（选填）</span><input data-publish-existing-id autocomplete="off" placeholder="旧草稿首次关联时填写，之后无需填写"><small>已在后台创建过这篇文章时，请先填写其草稿 ID，避免重复创建。</small></label>
               <label><span class="field-title">作者</span><input data-publish-author maxlength="16" placeholder="最多 16 个字符"><small>保存后作为默认作者</small></label>
               <label><span class="field-title">阅读原文链接</span><input data-publish-source-url type="url" maxlength="1024" placeholder="https://example.com/article"><small>选填，保存后作为默认链接</small></label>
               <label class="wide checkbox-row">
@@ -102,13 +103,13 @@
           </div>
         </div>
         <div class="wechat-html-editor-publish-footer">
-          <div id="wechat-html-editor-publish-status" data-state="neutral" role="status" aria-live="polite">账号设置和封面就绪后即可创建草稿。</div>
+          <div id="wechat-html-editor-publish-status" data-state="neutral" role="status" aria-live="polite">首次保存会创建草稿，之后自动更新同一篇。</div>
           <div class="wechat-html-editor-publish-actions">
             <div>
               <button type="button" class="secondary" data-action="save-wechat-config">保存账号设置</button>
               <button type="button" class="secondary" data-action="test-wechat">检查账号连接</button>
             </div>
-            <button type="button" class="publish" data-action="create-draft">创建草稿 <span aria-hidden="true">→</span></button>
+            <button type="button" class="publish" data-action="create-draft">保存草稿 <span aria-hidden="true">→</span></button>
           </div>
         </div>
       </div>
@@ -122,6 +123,9 @@
   const publishTrigger = mount.querySelector('[data-action="publish"]');
   const publishStatus = publishModal.querySelector('#wechat-html-editor-publish-status');
   const publishTitle = publishModal.querySelector('[data-publish-title]');
+  const publishExistingId = publishModal.querySelector('[data-publish-existing-id]');
+  const publishSaveButton = publishModal.querySelector('[data-action="create-draft"]');
+  let publishInProgress = false;
   const publishAuthor = publishModal.querySelector('[data-publish-author]');
   const publishSourceUrl = publishModal.querySelector('[data-publish-source-url]');
   const publishOpenComment = publishModal.querySelector('[data-publish-open-comment]');
@@ -280,6 +284,7 @@
     publishModal.querySelector('.wechat-html-editor-publish-layout').scrollTop = 0;
     publishTitle.value = document.title.trim().slice(0, 64);
     publishAuthor.value = '';
+    publishExistingId.value = '';
     publishSourceUrl.value = '';
     publishOpenComment.checked = true;
     publishSecret.value = '';
@@ -296,7 +301,7 @@
         ? `默认使用文章目录中的 ${config.coverName}；也可以重新选择。`
         : '文章目录中没有自动识别到封面，请选择 PNG/JPEG。';
       setPublishStatus(config.configured
-        ? '账号设置已就绪，可以直接创建草稿。'
+        ? '账号设置已就绪；已关联的文章将更新原草稿。'
         : '请先填写公众号 AppID 和 AppSecret。');
       window.setTimeout(() => {
         if (publishModal.classList.contains('visible')) publishTitle.focus({ preventScroll: true });
@@ -543,12 +548,15 @@
   }
 
   async function createWechatDraft() {
+    if (publishInProgress) return;
     const title = publishTitle.value.trim();
     if (!title) {
       setPublishStatus('创建失败：标题不能为空。');
       return;
     }
-    setPublishStatus('正在整理正文图片并创建草稿，请不要关闭页面……');
+    publishInProgress = true;
+    publishSaveButton.disabled = true;
+    setPublishStatus('正在核对并保存草稿，请不要关闭页面……');
     try {
       const author = publishAuthor.value.trim();
       const result = await apiRequest('/__wechat_editor/wechat/draft', {
@@ -558,12 +566,18 @@
         content: await buildWechatContent(),
         contentSourceUrl: publishSourceUrl.value.trim(),
         needOpenComment: publishOpenComment.checked,
-        coverData: selectedCoverData
+        coverData: selectedCoverData,
+        existingMediaId: publishExistingId.value.trim()
       });
-      setPublishStatus(`草稿创建成功，media_id：${result.mediaId}`);
-      setStatus('文章已推送到公众号草稿箱。');
+      const action = { created: '草稿创建成功', updated: '原草稿更新成功', unchanged: '内容未变化，已保留原草稿' }[result.action] || '草稿保存成功';
+      publishExistingId.value = '';
+      setPublishStatus(`${action}，media_id：${result.mediaId}${result.warning ? '。' + result.warning : ''}`);
+      setStatus(action + '。');
     } catch (error) {
-      setPublishStatus(`创建失败：${error.message}`);
+      setPublishStatus(`保存失败：${error.message}`);
+    } finally {
+      publishInProgress = false;
+      publishSaveButton.disabled = false;
     }
   }
 

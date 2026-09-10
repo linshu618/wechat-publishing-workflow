@@ -49,7 +49,9 @@ codex plugin add wechat-publishing-workflow@personal
 
 需要直接创建草稿时，点击 `推送到草稿箱`，填写公众号 AppID 和 AppSecret，再点 `保存账号设置`。账号需要具备草稿接口权限，并将当前公网 IP 加入白名单。
 
-默认作者、阅读原文链接和评论开关只需设置一次，以后会自动带入。确认文章标题和封面后点击 `创建草稿`，正文图片和封面会随文章上传。随后到公众号后台预览、按需设置原创声明并发布。
+默认作者、阅读原文链接和评论开关只需设置一次，以后会自动带入。确认文章标题和封面后点击 `保存草稿`，正文图片和封面会随文章上传。随后到公众号后台预览、按需设置原创声明并发布。
+
+同一账号、同一文章文件首次创建草稿，后续保存更新原稿；后台有修改时先提示，避免覆盖。升级前已创建的草稿可填写 ID 关联。
 
 封面命名、账号配置、图片操作和常见问题见[使用指南](plugins/wechat-publishing-workflow/README.md)。
 
@@ -93,6 +95,7 @@ scripts/package_release.py        发布包打包脚本
 ```powershell
 python -m unittest discover -s .\plugins\wechat-publishing-workflow\tests -v
 node .\plugins\wechat-publishing-workflow\tests\test_frontend_gif.cjs
+node .\plugins\wechat-publishing-workflow\tests\test_frontend_draft.cjs
 python .\scripts\package_release.py
 ```
 

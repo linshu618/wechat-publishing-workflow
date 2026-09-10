@@ -321,6 +321,8 @@ class EditorHandler(BaseHTTPRequestHandler):
                         raise FileNotFoundError("没有找到封面，请在窗口中选择 PNG/JPEG 封面")
                     cover_bytes, cover_mime, cover_extension = publisher.read_cover_file(cover)
                 result = publisher.publish_draft(
+                    article_path=self.server.article_path,
+                    existing_media_id=str(body.get("existingMediaId") or ""),
                     title=str(body.get("title") or ""),
                     author=str(body.get("author") or ""),
                     digest=str(body.get("digest") or ""),

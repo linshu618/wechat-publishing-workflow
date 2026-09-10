@@ -104,7 +104,17 @@ YYYY-MM-DD-标题\标题.html
 
 标题会从当前文章自动带入，作者、链接和评论设置会加载已保存的默认值。文章目录里的封面会自动识别，也可以手动选择 PNG 或 JPEG 图片。
 
-定稿后点击 `创建草稿`，编辑器会整理排版、上传正文图片和封面，并将文章保存到草稿箱。随后到公众号后台预览内容、按文章实际情况设置原创声明，再完成发布。
+定稿后点击 `保存草稿`，编辑器会整理排版、上传正文图片和封面，并将文章保存到草稿箱。随后到公众号后台预览内容、按文章实际情况设置原创声明，再完成发布。
+
+### 同一篇文章更新同一份草稿
+
+第一次点击 `保存草稿` 会创建草稿；以后在同一账号、同一个文章文件中修改后再保存，会更新原稿。内容没变时直接保留，不重复上传或创建。
+
+升级前已经创建过的草稿，需要在发布面板中填写一次“已有草稿 ID”；命令行使用 `--draft-id`。关联时请确认它是当前文章的单篇草稿。移动或重命名 HTML 后，也需要重新关联原稿。
+
+若公众号后台也修改了草稿，工作台会指出变化并停止更新，保留后台内容。草稿被删除、发布移出草稿箱或请求结果不确定时，也不会自动另建一份。请先核对后台状态再处理。
+
+草稿关联记录存放在 `%LOCALAPPDATA%\wechat-draft-publisher\drafts`，不包含账号密钥和文章正文。请保留这些记录，以便下次识别原稿。
 
 ## 封面怎么准备
 
@@ -160,6 +170,7 @@ AppID 和常用发布设置作为本地配置保存，AppSecret 使用 Windows D
 ```powershell
 python -m unittest discover -s ".\plugins\wechat-publishing-workflow\tests" -v
 node .\plugins\wechat-publishing-workflow\tests\test_frontend_gif.cjs
+node .\plugins\wechat-publishing-workflow\tests\test_frontend_draft.cjs
 python .\scripts\package_release.py
 ```
 
