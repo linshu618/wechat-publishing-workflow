@@ -20,6 +20,7 @@ ROOT_FILES = (
     "LICENSE",
     "LICENSE.zh-CN.md",
     "README.md",
+    "CHANGELOG.md",
     "scripts/package_release.py",
 )
 PLUGIN_FILES = (

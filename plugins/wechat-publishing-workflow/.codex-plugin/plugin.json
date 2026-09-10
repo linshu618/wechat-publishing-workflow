@@ -1,6 +1,6 @@
 {
   "name": "wechat-publishing-workflow",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "在 Windows 本地生成或编辑公众号 HTML，并在获得明确授权后创建草稿。",
   "author": {
     "name": "linshu618"
