@@ -158,7 +158,10 @@ class EditorHandler(BaseHTTPRequestHandler):
                     200,
                     rendered,
                     "text/html; charset=utf-8",
-                    {"Content-Security-Policy": f"script-src 'nonce-{self.server.token}'; connect-src 'self'"},
+                    {"Content-Security-Policy": (
+                        f"script-src 'nonce-{self.server.token}'; "
+                        "connect-src 'self'; img-src 'self' data: blob:"
+                    )},
                 )
             except Exception as error:  # pragma: no cover - 错误会直接返回给用户
                 self.send_json(500, {"ok": False, "error": str(error)})
@@ -171,6 +174,9 @@ class EditorHandler(BaseHTTPRequestHandler):
                 "bytes": stat.st_size,
                 "draftPublisher": bool(self.server.publisher),
             })
+            return
+        if request.path == "/__wechat_editor/cover":
+            self.send_cover_preview()
             return
         if request.path == "/__wechat_editor/wechat/config":
             if self.headers.get("X-WeChat-Editor-Token") != self.server.token:
@@ -186,11 +192,30 @@ class EditorHandler(BaseHTTPRequestHandler):
                     "available": True,
                     **self.server.publisher.credential_status(),
                     "coverName": cover.name if cover else "",
+                    "coverUrl": "/__wechat_editor/cover" if cover else "",
                 })
             except Exception as error:
                 self.send_json(400, {"ok": False, "available": True, "error": str(error)})
             return
         self.serve_article_asset(request.path)
+
+    def send_cover_preview(self) -> None:
+        cover = self.server.resolve_cover()
+        if not cover:
+            self.send_json(404, {"ok": False, "error": "没有找到封面"})
+            return
+        try:
+            if self.server.publisher:
+                cover_bytes, cover_mime, _extension = self.server.publisher.read_cover_file(cover)
+            else:
+                cover_bytes = cover.read_bytes()
+                cover_mime = mimetypes.guess_type(cover.name)[0] or "application/octet-stream"
+                if cover_mime not in {"image/png", "image/jpeg"}:
+                    raise ValueError("封面必须是 PNG 或 JPEG")
+        except Exception as error:
+            self.send_json(400, {"ok": False, "error": str(error)})
+            return
+        self.send_bytes(200, cover_bytes, cover_mime)
 
     def serve_article_asset(self, request_path: str) -> None:
         relative = unquote(request_path).lstrip("/")

@@ -84,7 +84,15 @@
                 <b>本机加密</b>
               </div>
               <div class="wechat-html-editor-publish-grid wechat-html-editor-account-grid">
-                <label class="wide"><span class="field-title">AppID</span><input data-publish-appid autocomplete="off" placeholder="填写公众号 AppID"></label>
+                <label class="wide"><span class="field-title">AppID</span>
+                  <span class="wechat-html-editor-secret-field">
+                    <input data-publish-appid type="text" autocomplete="username" spellcheck="false" placeholder="填写公众号 AppID">
+                    <button type="button" class="wechat-html-editor-secret-toggle" data-action="toggle-secret" aria-label="显示 AppID" aria-pressed="false" title="显示">
+                      <svg class="icon-show" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                      <svg class="icon-hide" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3l18 18"></path><path d="M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.4"></path><path d="M9.9 5.2A11.5 11.5 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.2 3.9"></path><path d="M6.7 6.7C4.1 8.4 2 12 2 12s3.5 7 10 7c1.7 0 3.2-.4 4.6-1.1"></path></svg>
+                    </button>
+                  </span>
+                </label>
                 <label class="wide"><span class="field-title">AppSecret</span><input data-publish-secret type="password" autocomplete="off" placeholder="已保存时无需重复填写"></label>
               </div>
             </section>
@@ -93,10 +101,14 @@
                 <span>03</span>
                 <div><strong>文章封面</strong><p>自动识别，也可以手动替换</p></div>
               </div>
-              <label class="wechat-html-editor-cover-picker">
+              <label class="wechat-html-editor-cover-picker" data-cover-picker>
                 <input data-publish-cover type="file" accept="image/png,image/jpeg">
-                <span class="wechat-html-editor-cover-plus" aria-hidden="true">＋</span>
-                <span><strong>选择封面图片</strong><small>支持 PNG、JPEG</small></span>
+                <img data-publish-cover-preview class="wechat-html-editor-cover-preview" alt="" hidden>
+                <span class="wechat-html-editor-cover-empty">
+                  <span class="wechat-html-editor-cover-plus" aria-hidden="true">＋</span>
+                  <span><strong>选择封面图片</strong><small>支持 PNG、JPEG</small></span>
+                </span>
+                <span class="wechat-html-editor-cover-change">更换封面</span>
               </label>
               <p class="wechat-html-editor-cover-status" data-publish-cover-status>正在检查文章目录中的封面……</p>
             </section>
@@ -133,6 +145,10 @@
   const publishSecret = publishModal.querySelector('[data-publish-secret]');
   const publishCover = publishModal.querySelector('[data-publish-cover]');
   const publishCoverStatus = publishModal.querySelector('[data-publish-cover-status]');
+  const publishCoverPreview = publishModal.querySelector('[data-publish-cover-preview]');
+  const coverPicker = publishModal.querySelector('[data-cover-picker]');
+  let coverPreviewRequest = 0;
+  let coverObjectUrl = '';
   // 工具栏的模糊效果会改变固定定位的参考范围，弹窗必须挂在工具栏之外。
   document.body.appendChild(publishModal);
   let selectedImage = null;
@@ -289,17 +305,26 @@
     publishOpenComment.checked = true;
     publishSecret.value = '';
     selectedCoverData = '';
+    publishCover.value = '';
+    clearCoverPreview();
+    publishCoverStatus.textContent = '正在检查文章目录中的封面……';
     setPublishStatus('正在读取本机账号设置……');
     try {
       const config = await apiRequest('/__wechat_editor/wechat/config');
       const defaults = config.defaults || {};
       publishAppid.value = config.appid || '';
+      setSecretRevealed(publishAppid, false);
       publishAuthor.value = defaults.author || localStorage.getItem('wechat-draft-author') || '';
       publishSourceUrl.value = defaults.contentSourceUrl || '';
       publishOpenComment.checked = defaults.needOpenComment !== false;
-      publishCoverStatus.textContent = config.coverName
-        ? `默认使用文章目录中的 ${config.coverName}；也可以重新选择。`
-        : '文章目录中没有自动识别到封面，请选择 PNG/JPEG。';
+      if (config.coverUrl || config.coverName) {
+        const loaded = await loadCoverPreview(config);
+        publishCoverStatus.textContent = loaded
+          ? `当前封面：${config.coverName || '已选择的图片'}。点击预览可更换。`
+          : '已识别到封面，但预览没有显示出来；创建草稿仍会使用该封面，也可以重新选择。';
+      } else {
+        publishCoverStatus.textContent = '文章目录中没有自动识别到封面，请选择 PNG/JPEG。';
+      }
       setPublishStatus(config.configured
         ? '账号设置已就绪；已关联的文章将更新原草稿。'
         : '请先填写公众号 AppID 和 AppSecret。');
@@ -320,6 +345,78 @@
 
   function credentialPayload() {
     return { appid: publishAppid.value.trim(), secret: publishSecret.value.trim() };
+  }
+
+  function setSecretRevealed(input, revealed) {
+    const field = input.closest('.wechat-html-editor-secret-field');
+    const button = field?.querySelector('[data-action="toggle-secret"]');
+    if (!field || !button) return;
+    field.classList.toggle('revealed', revealed);
+    const name = field.closest('label')?.querySelector('.field-title')?.textContent?.trim() || '内容';
+    button.setAttribute('aria-pressed', revealed ? 'true' : 'false');
+    button.setAttribute('aria-label', revealed ? `隐藏 ${name}` : `显示 ${name}`);
+    button.title = revealed ? '隐藏' : '显示';
+  }
+
+  function toggleSecretField(button) {
+    const field = button.closest('.wechat-html-editor-secret-field');
+    const input = field?.querySelector('input');
+    if (!field || !input) return;
+    setSecretRevealed(input, !field.classList.contains('revealed'));
+  }
+
+  function revokeCoverObjectUrl() {
+    if (!coverObjectUrl) return;
+    URL.revokeObjectURL(coverObjectUrl);
+    coverObjectUrl = '';
+  }
+
+  function clearCoverPreview() {
+    coverPreviewRequest += 1;
+    coverPicker.classList.remove('has-preview');
+    publishCoverPreview.hidden = true;
+    publishCoverPreview.removeAttribute('src');
+    publishCoverPreview.removeAttribute('aria-label');
+    revokeCoverObjectUrl();
+  }
+
+  function showCoverPreview(src, name) {
+    coverPicker.classList.add('has-preview');
+    publishCoverPreview.hidden = false;
+    publishCoverPreview.alt = '';
+    if (name) publishCoverPreview.setAttribute('aria-label', `文章封面：${name}`);
+    else publishCoverPreview.removeAttribute('aria-label');
+    publishCoverPreview.src = src;
+  }
+
+  async function fetchCoverBlob(url) {
+    const response = await fetch(url, { headers: { 'X-WeChat-Editor-Token': token } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const mime = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    if (!mime.startsWith('image/')) throw new Error(mime || 'not-image');
+    const blob = await response.blob();
+    if (!blob.size) throw new Error('empty');
+    return blob;
+  }
+
+  async function loadCoverPreview(config) {
+    const requestId = coverPreviewRequest;
+    const candidates = [];
+    if (config.coverName) candidates.push(`/${encodeURIComponent(config.coverName)}`);
+    if (config.coverUrl) candidates.push(config.coverUrl);
+    for (const url of candidates) {
+      try {
+        const blob = await fetchCoverBlob(url);
+        if (requestId !== coverPreviewRequest) return false;
+        revokeCoverObjectUrl();
+        coverObjectUrl = URL.createObjectURL(blob);
+        showCoverPreview(coverObjectUrl, config.coverName || '文章封面');
+        return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
   }
 
   function publishDefaultsPayload() {
@@ -616,6 +713,7 @@
     if (action === 'save-wechat-config') saveWechatConfig();
     if (action === 'test-wechat') testWechatAccess();
     if (action === 'create-draft') createWechatDraft();
+    if (action === 'toggle-secret') toggleSecretField(event.target.closest('button'));
 
     const imageAction = event.target.closest('button')?.dataset.imageAction;
     if (!imageAction) return;
@@ -663,10 +761,19 @@
     }
     try {
       selectedCoverData = await readImage(file);
+      revokeCoverObjectUrl();
+      showCoverPreview(selectedCoverData, file.name);
       publishCoverStatus.textContent = `已选择 ${file.name}，创建草稿时使用这张封面。`;
     } catch (error) {
+      selectedCoverData = '';
       publishCoverStatus.textContent = `封面读取失败：${error.message}`;
     }
+  });
+
+  publishCoverPreview.addEventListener('error', () => {
+    if (publishCoverPreview.hidden || !publishCoverPreview.getAttribute('src')) return;
+    if (!coverPicker.classList.contains('has-preview')) return;
+    publishCoverStatus.textContent = '封面预览加载失败，仍可用来创建草稿。';
   });
 
   document.addEventListener('selectionchange', rememberSelection);

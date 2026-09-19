@@ -39,12 +39,12 @@ python $publisher publish --html-file 'C:\文章\article.html' --cover 'C:\图�
 
 ## 凭据处理
 
-- 凭据保存在 `%LOCALAPPDATA%\wechat-draft-publisher\credentials.json`。
+- 凭据保存在 `%LOCALAPPDATA%\wechat-draft-publisher\credentials.json`。若在 Codex 桌面应用里保存，也会读取 Codex 应用包虚拟目录中的同一文件。
 - 使用 Windows DPAPI 为当前 Windows 用户加密 AppSecret。
 - 任何情况下都不能降级为明文保存凭据。
 - 如果发现旧版 `%LOCALAPPDATA%\wechat-html-editor\credentials.json`，自动迁移其中的凭据。
 - 配置文件版本 2 可以按当前 AppID 保存默认作者、默认阅读原文链接和默认评论开关。更新这些默认值时不得破坏或暴露已加密的 AppSecret。
-- `40164` 表示 IP 白名单问题，`48001` 表示缺少草稿接口权限，`40125` 表示 AppSecret 无效或已重置。
+- `40164` 表示 IP 白名单问题，报错会带上微信看到的公网 IP；`48001` 表示缺少草稿接口权限，`40125` 表示 AppSecret 无效或已重置。
 
 ## 内容要求
 

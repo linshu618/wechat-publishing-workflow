@@ -22,9 +22,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-CONFIG_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-draft-publisher"
+DEFAULT_CONFIG_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-draft-publisher"
+CONFIG_ROOT = DEFAULT_CONFIG_ROOT
 CONFIG_PATH = CONFIG_ROOT / "credentials.json"
-LEGACY_CONFIG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-html-editor" / "credentials.json"
+DEFAULT_LEGACY_CONFIG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "wechat-html-editor" / "credentials.json"
+LEGACY_CONFIG_PATH = DEFAULT_LEGACY_CONFIG_PATH
 MAX_ARTICLE_IMAGE_BYTES = 1024 * 1024
 MAX_ARTICLE_GIF_BYTES = 10 * 1024 * 1024
 MAX_COVER_BYTES = 10 * 1024 * 1024
@@ -62,17 +64,23 @@ class WeChatApiError(RuntimeError):
 
 def explain_wechat_error(result: dict[str, Any]) -> str:
     code = _integer_or_none(result.get("errcode"))
+    errmsg = str(result.get("errmsg") or "")
     messages = {
         40005: "微信不支持这种图片格式",
         40006: "图片文件过大",
+        40007: "关联的草稿已失效，可能已删除或已发表。请到公众号后台草稿箱核对；确认不在草稿箱后，才能重新保存为新草稿",
         40009: "图片文件大小不符合微信要求",
         40013: "AppID 无效，请检查是否复制完整",
         40125: "AppSecret 无效；如果刚刚重置，请使用新的 AppSecret",
-        40164: "当前公网 IP 不在公众号 IP 白名单中",
         45009: "微信接口调用次数已达到当日上限",
         48001: "该公众号没有草稿接口权限",
     }
-    return messages.get(code) or str(result.get("errmsg") or f"微信接口返回错误 {code or '未知'}")
+    if code == 40164:
+        match = re.search(r"invalid ip (\S+)", errmsg)
+        if match:
+            return f"当前公网 IP {match.group(1)} 不在公众号 IP 白名单中"
+        return "当前公网 IP 不在公众号 IP 白名单中"
+    return messages.get(code) or errmsg or f"微信接口返回错误 {code or '未知'}"
 
 
 def _integer_or_none(value: Any) -> int | None:
@@ -143,8 +151,68 @@ def _dpapi(mode: str, value: str) -> str:
     return completed.stdout
 
 
+def _using_default_config_location() -> bool:
+    try:
+        return CONFIG_ROOT.resolve() == DEFAULT_CONFIG_ROOT.resolve()
+    except OSError:
+        return False
+
+
+def _packaged_local_appdata_dirs() -> list[Path]:
+    packages = DEFAULT_CONFIG_ROOT.parent / "Packages"
+    if not packages.is_dir():
+        return []
+    found: list[Path] = []
+    for package in sorted(packages.glob("OpenAI.Codex_*")):
+        candidate = package / "LocalCache" / "Local"
+        if candidate.is_dir():
+            found.append(candidate)
+    return found
+
+
+def _unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _active_config_path() -> Path:
+    return CONFIG_ROOT / "credentials.json"
+
+
+def _candidate_config_files() -> list[Path]:
+    files = [_active_config_path()]
+    if _using_default_config_location():
+        for packaged in _packaged_local_appdata_dirs():
+            files.append(packaged / "wechat-draft-publisher" / "credentials.json")
+        files.append(LEGACY_CONFIG_PATH)
+        for packaged in _packaged_local_appdata_dirs():
+            files.append(packaged / "wechat-html-editor" / "credentials.json")
+    return _unique_paths(files)
+
+
+def resolve_config_path() -> Path:
+    for candidate in _candidate_config_files():
+        if candidate.is_file():
+            return candidate
+    return _active_config_path()
+
+
+def resolve_config_root() -> Path:
+    return resolve_config_path().parent
+
+
 def _migrate_legacy_credentials() -> None:
-    if CONFIG_PATH.exists() or not LEGACY_CONFIG_PATH.exists():
+    if not _using_default_config_location():
+        return
+    config_path = _active_config_path()
+    if config_path.is_file() or not LEGACY_CONFIG_PATH.is_file():
         return
     try:
         config = json.loads(LEGACY_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -153,9 +221,9 @@ def _migrate_legacy_credentials() -> None:
     if not config.get("appid") or not config.get("protectedSecret"):
         return
     CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
-    temporary = CONFIG_PATH.with_suffix(".tmp")
+    temporary = config_path.with_suffix(".tmp")
     temporary.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, CONFIG_PATH)
+    os.replace(temporary, config_path)
 
 
 def normalize_publish_defaults(value: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -185,17 +253,18 @@ def normalize_publish_defaults(value: dict[str, Any] | None = None) -> dict[str,
 
 
 def _write_config(config: dict[str, Any]) -> Path:
-    CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
-    temporary = CONFIG_PATH.with_suffix(".tmp")
+    path = resolve_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, CONFIG_PATH)
-    return CONFIG_PATH
+    os.replace(temporary, path)
+    return path
 
 
 def load_publish_defaults() -> dict[str, Any]:
     _migrate_legacy_credentials()
     try:
-        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config = json.loads(resolve_config_path().read_text(encoding="utf-8"))
     except FileNotFoundError:
         return dict(DEFAULT_PUBLISH_DEFAULTS)
     except Exception as error:
@@ -210,7 +279,7 @@ def save_credentials(appid: str, secret: str, defaults: dict[str, Any] | None = 
         raise ValueError("AppID 和 AppSecret 不能为空")
     if defaults is None:
         try:
-            existing = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            existing = json.loads(resolve_config_path().read_text(encoding="utf-8"))
             existing_defaults = existing.get("defaults") if str(existing.get("appid") or "").strip() == appid else None
         except Exception:
             existing_defaults = None
@@ -227,7 +296,7 @@ def save_credentials(appid: str, secret: str, defaults: dict[str, Any] | None = 
 def save_publish_defaults(appid: str, defaults: dict[str, Any]) -> Path:
     appid = appid.strip()
     try:
-        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config = json.loads(resolve_config_path().read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise RuntimeError("尚未保存本机公众号配置") from error
     except Exception as error:
@@ -245,7 +314,7 @@ def save_publish_defaults(appid: str, defaults: dict[str, Any]) -> Path:
 def load_credentials() -> tuple[str, str]:
     _migrate_legacy_credentials()
     try:
-        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config = json.loads(resolve_config_path().read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise RuntimeError("尚未保存本机公众号配置") from error
     except Exception as error:
@@ -262,21 +331,22 @@ def load_credentials() -> tuple[str, str]:
 
 def credential_status() -> dict[str, Any]:
     _migrate_legacy_credentials()
-    if not CONFIG_PATH.exists():
+    path = resolve_config_path()
+    if not path.is_file():
         return {
             "configured": False,
             "appid": "",
-            "path": str(CONFIG_PATH),
+            "path": str(path),
             "defaults": dict(DEFAULT_PUBLISH_DEFAULTS),
         }
     try:
-        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        config = json.loads(path.read_text(encoding="utf-8"))
         appid = str(config.get("appid") or "").strip()
         configured = bool(appid and config.get("protectedSecret"))
         defaults = normalize_publish_defaults(config.get("defaults"))
     except Exception:
         appid, configured, defaults = "", False, dict(DEFAULT_PUBLISH_DEFAULTS)
-    return {"configured": configured, "appid": appid, "path": str(CONFIG_PATH), "defaults": defaults}
+    return {"configured": configured, "appid": appid, "path": str(path), "defaults": defaults}
 
 
 def resolve_credentials(appid: str = "", secret: str = "") -> tuple[str, str]:
@@ -468,7 +538,7 @@ def find_cover(article_directory: Path, explicit: str | Path | None = None) -> P
 
 def _draft_state_path(appid: str, article_path: str | Path) -> Path:
     identity = appid + "\n" + os.path.normcase(str(Path(article_path).expanduser().resolve()))
-    return CONFIG_ROOT / "drafts" / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
+    return resolve_config_root() / "drafts" / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
 
 
 @contextmanager

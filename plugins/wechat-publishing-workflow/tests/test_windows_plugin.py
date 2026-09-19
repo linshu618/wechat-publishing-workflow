@@ -10,8 +10,10 @@ import sys
 import tempfile
 import threading
 import unittest
+from io import BytesIO
 from unittest import mock
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -144,6 +146,78 @@ class WindowsPluginTests(unittest.TestCase):
                 self.assertEqual(server.resolve_cover(), explicit)
             finally:
                 server.server_close()
+
+    def test_cover_preview_endpoint_serves_resolved_and_explicit_covers(self) -> None:
+        from PIL import Image
+
+        editor = load_module("editor_cover_preview", EDITOR_ROOT / "scripts" / "edit_html.py")
+        buffer = BytesIO()
+        Image.new("RGB", (12, 5), (47, 151, 100)).save(buffer, format="PNG")
+        png = buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as article_dir, tempfile.TemporaryDirectory() as other_dir:
+            root = Path(article_dir)
+            article = root / "任意文章.html"
+            article.write_text("<!doctype html><html><body><article><p>正文</p></article></body></html>", encoding="utf-8")
+            cover = root / "公众号封面.png"
+            cover.write_bytes(png)
+            outside = Path(other_dir) / "自选封面.png"
+            Image.new("RGB", (8, 4), (55, 90, 70)).save(outside, format="PNG")
+            token = "test-token"
+            server = editor.EditorServer(("127.0.0.1", 0), article, token)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urlopen(base + "/__wechat_editor/cover", timeout=5) as response:
+                    self.assertEqual(response.headers.get_content_type(), "image/png")
+                    self.assertEqual(response.read(), png)
+                from urllib.parse import quote
+                with urlopen(base + "/" + quote(cover.name), timeout=5) as response:
+                    self.assertEqual(response.headers.get_content_type(), "image/png")
+                    self.assertEqual(response.read(), png)
+
+                config_request = Request(
+                    base + "/__wechat_editor/wechat/config",
+                    headers={"X-WeChat-Editor-Token": token},
+                )
+                with urlopen(config_request, timeout=5) as response:
+                    config = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(config["coverName"], "公众号封面.png")
+                self.assertEqual(config["coverUrl"], "/__wechat_editor/cover")
+
+                server.cover_path = outside
+                with urlopen(base + "/__wechat_editor/cover", timeout=5) as response:
+                    self.assertEqual(response.read(), outside.read_bytes())
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_cover_preview_endpoint_returns_404_without_cover(self) -> None:
+        editor = load_module("editor_cover_preview_missing", EDITOR_ROOT / "scripts" / "edit_html.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            article = Path(temporary) / "任意文章.html"
+            article.write_text("<!doctype html><html><body><article><p>正文</p></article></body></html>", encoding="utf-8")
+            server = editor.EditorServer(("127.0.0.1", 0), article, "test-token")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(f"http://127.0.0.1:{server.server_port}/__wechat_editor/cover", timeout=5)
+                self.assertEqual(raised.exception.code, 404)
+                config_request = Request(
+                    f"http://127.0.0.1:{server.server_port}/__wechat_editor/wechat/config",
+                    headers={"X-WeChat-Editor-Token": "test-token"},
+                )
+                with urlopen(config_request, timeout=5) as response:
+                    config = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(config["coverName"], "")
+                self.assertEqual(config["coverUrl"], "")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
 
     def test_repeated_saves_keep_the_first_session_backup(self) -> None:
         editor = load_module("editor_session_backup", EDITOR_ROOT / "scripts" / "edit_html.py")
@@ -343,6 +417,51 @@ class WindowsPluginTests(unittest.TestCase):
                 timeout=10,
                 check=False,
             )
+
+    def test_credential_status_reads_codex_packaged_appdata(self) -> None:
+        publisher = load_module("publisher_codex_appdata", PUBLISHER_ROOT / "scripts" / "wechat_draft.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            default_root = Path(temporary) / "Local" / "wechat-draft-publisher"
+            packaged_local = Path(temporary) / "packaged-local"
+            packaged_root = packaged_local / "wechat-draft-publisher"
+            packaged_root.mkdir(parents=True)
+            (packaged_root / "credentials.json").write_text(
+                json.dumps({
+                    "version": 2,
+                    "appid": "wx-codex-account",
+                    "protectedSecret": "protected",
+                    "defaults": {"author": "Codex作者", "contentSourceUrl": "", "needOpenComment": True},
+                }),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(publisher, "DEFAULT_CONFIG_ROOT", default_root),
+                mock.patch.object(publisher, "CONFIG_ROOT", default_root),
+                mock.patch.object(publisher, "CONFIG_PATH", default_root / "credentials.json"),
+                mock.patch.object(publisher, "LEGACY_CONFIG_PATH", default_root.parent / "wechat-html-editor" / "credentials.json"),
+                mock.patch.object(publisher, "_packaged_local_appdata_dirs", return_value=[packaged_local]),
+            ):
+                status = publisher.credential_status()
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["appid"], "wx-codex-account")
+        self.assertEqual(status["defaults"]["author"], "Codex作者")
+        self.assertEqual(status["path"], str(packaged_root / "credentials.json"))
+
+    def test_ip_whitelist_error_includes_the_rejected_address(self) -> None:
+        publisher = load_module("publisher_ip_whitelist_error", PUBLISHER_ROOT / "scripts" / "wechat_draft.py")
+        message = publisher.explain_wechat_error({
+            "errcode": 40164,
+            "errmsg": "invalid ip 183.23.64.127 ipv6 ::ffff:183.23.64.127, not in whitelist rid: test",
+        })
+        self.assertEqual(message, "当前公网 IP 183.23.64.127 不在公众号 IP 白名单中")
+        self.assertEqual(
+            publisher.explain_wechat_error({"errcode": 40164, "errmsg": "invalid ip"}),
+            "当前公网 IP 不在公众号 IP 白名单中",
+        )
+        self.assertEqual(
+            publisher.explain_wechat_error({"errcode": 40007, "errmsg": "invalid media_id"}),
+            "关联的草稿已失效，可能已删除或已发表。请到公众号后台草稿箱核对；确认不在草稿箱后，才能重新保存为新草稿",
+        )
 
 
 if __name__ == "__main__":
